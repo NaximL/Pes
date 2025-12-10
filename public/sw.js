@@ -1,72 +1,70 @@
-importScripts('./ConfigSW.js');
-
-const CACHE_NAME = `fastshark-ch-${VERSION_APP}`;
+const VERSION_APP = 3;
+const CACHE_NAME = `fastshark-cache-v${VERSION_APP}`;
 
 const ASSETS = [
   '/',
   '/index.html',
   '/manifest.json',
   '/icon.png',
-  '/favicon.ico',
+  '/favicon.ico'
 ];
 
-
-self.addEventListener('install', (event) => {
-  event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(ASSETS))
-  );
+// ---- INSTALL ----
+self.addEventListener('install', event => {
   self.skipWaiting();
-});
-
-self.addEventListener('message', async (event) => {
-  if (event.data && event.data.type === 'UPDATE_CACHE') {
-    const keys = await caches.keys();
-    await Promise.all(keys.map((key) => caches.delete(key)));
-    const cache = await caches.open(CACHE_NAME);
-    await cache.addAll(ASSETS);
-    console.log('Старый кэш удален, новый кэш обновлён!');
-  }
-});
-
-self.addEventListener('activate', (event) => {
   event.waitUntil(
-    caches.keys().then((keys) =>
+    caches.open(CACHE_NAME).then(cache => cache.addAll(ASSETS))
+  );
+});
+
+// ---- ACTIVATE ----
+self.addEventListener('activate', event => {
+  event.waitUntil(
+    caches.keys().then(keys =>
       Promise.all(
-        keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))
+        keys.filter(name => name !== CACHE_NAME)
+            .map(name => caches.delete(name))
       )
     )
   );
   self.clients.claim();
 });
 
+// ---- FETCH ----
+self.addEventListener('fetch', event => {
 
-self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
-
-  const url = event.request.url;
-
-
-  if (!url.startsWith(self.location.origin)) return;
+  if (!event.request.url.startsWith(self.location.origin)) return;
 
   event.respondWith(
-    caches.match(event.request).then((cached) => {
+    caches.open(CACHE_NAME).then(async cache => {
+
+      const cached = await cache.match(event.request);
       if (cached) return cached;
 
+      try {
+        const response = await fetch(event.request);
+        if (response && response.status === 200) {
+          cache.put(event.request, response.clone());
+        }
+        return response;
+      } catch {
+        return cache.match('/index.html');
+      }
 
-      return fetch(event.request)
-        .then((response) => {
-
-          if (!response || response.status !== 200 || response.type !== 'basic') {
-            return response;
-          }
-
-
-          const responseClone = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, responseClone));
-
-          return response;
-        })
-        .catch(() => caches.match('/index.html'))
     })
   );
+});
+
+// ---- UPDATE ----
+self.addEventListener('message', async event => {
+  if (event.data?.type === 'UPDATE_CACHE') {
+    const keys = await caches.keys();
+    await Promise.all(keys.map(key => caches.delete(key)));
+
+    const cache = await caches.open(CACHE_NAME);
+    await cache.addAll(ASSETS);
+
+    console.log('✅ Cache updated');
+  }
 });
