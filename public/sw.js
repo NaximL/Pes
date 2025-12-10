@@ -9,43 +9,60 @@ const ASSETS = [
   '/favicon.ico'
 ];
 
-// ---- INSTALL ----
+// ---------------- INSTALL ----------------
 self.addEventListener('install', event => {
+  console.log('📦 SW install');
   self.skipWaiting();
   event.waitUntil(
     caches.open(CACHE_NAME).then(cache => cache.addAll(ASSETS))
   );
 });
 
-// ---- ACTIVATE ----
+// ---------------- ACTIVATE ----------------
 self.addEventListener('activate', event => {
+  console.log('⚙️ SW activate');
   event.waitUntil(
     caches.keys().then(keys =>
       Promise.all(
         keys.filter(name => name !== CACHE_NAME)
-            .map(name => caches.delete(name))
+            .map(name => {
+              console.log('🗑️ delete cache:', name);
+              return caches.delete(name);
+            })
       )
     )
   );
   self.clients.claim();
 });
 
-// ---- FETCH ----
+// ---------------- FETCH ----------------
 self.addEventListener('fetch', event => {
 
   if (event.request.method !== 'GET') return;
-  if (!event.request.url.startsWith(self.location.origin)) return;
+
+  const url = event.request.url;
+
+  // ✅ ВСЕГДА ИЗ СЕТИ ДЛЯ ESP
+  if (url.startsWith('http://192.168.4.1')) {
+    event.respondWith(fetch(event.request));
+    return;
+  }
+
+  // ✅ КЭШ ТОЛЬКО СВОЕГО САЙТА
+  if (!url.startsWith(self.location.origin)) return;
 
   event.respondWith(
     caches.open(CACHE_NAME).then(async cache => {
 
       const cached = await cache.match(event.request);
-      if (cached) return cached;
+      if (cached) {
+        return cached;
+      }
 
       try {
         const response = await fetch(event.request);
         if (response && response.status === 200) {
-          cache.put(event.request, response.clone());
+          await cache.put(event.request, response.clone());
         }
         return response;
       } catch {
@@ -56,15 +73,19 @@ self.addEventListener('fetch', event => {
   );
 });
 
-// ---- UPDATE ----
+// ---------------- UPDATE MESSAGES ----------------
 self.addEventListener('message', async event => {
+
   if (event.data?.type === 'UPDATE_CACHE') {
+
+    console.log('♻ updating cache...');
+
     const keys = await caches.keys();
     await Promise.all(keys.map(key => caches.delete(key)));
 
     const cache = await caches.open(CACHE_NAME);
     await cache.addAll(ASSETS);
 
-    console.log('✅ Cache updated');
+    console.log('✅ cache updated');
   }
 });
